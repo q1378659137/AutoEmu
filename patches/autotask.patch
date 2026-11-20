@@ -1,0 +1,555 @@
+# NS Toolbox 自动创建任务：相对 easyworld/hekate 9bf0f7d0 的完整改动
+# 应用：git apply -p1 --directory=. patches/autotask.patch （在 hekate 仓库根）
+
+--- a/bdk/mem/minerva.c
++++ b/bdk/mem/minerva.c
+@@ -52,7 +52,7 @@
+ 	{
+ 		// Load library and do a periodic training if needed.
+ 		mtc_cfg->train_mode = OP_PERIODIC_TRAIN;
+-		mtc_call = (void *)ianos_static_module("bootloader/sys/libsys_minerva.bso", (void *)mtc_cfg);
++		mtc_call = (void *)ianos_static_module("bootloader/ns-toolbox/libsys_minerva.bso", (void *)mtc_cfg);
+ 
+ 		return !mtc_call ? 1 : 0;
+ 	}
+@@ -66,7 +66,7 @@
+ 		mtc_tmp.init_done  = !no_table ? MTC_NEW_MAGIC : MTC_IRB_MAGIC;
+ 
+ 		// Load library and get table.
+-		u32 ep_addr = ianos_static_module("bootloader/sys/libsys_minerva.bso", (void *)&mtc_tmp);
++		u32 ep_addr = ianos_static_module("bootloader/ns-toolbox/libsys_minerva.bso", (void *)&mtc_tmp);
+ 
+ 		// Ensure that Minerva is initialized.
+ 		if (mtc_tmp.init_done == MTC_INIT_MAGIC)
+@@ -87,7 +87,7 @@
+ 	mtc_cfg->sdram_id   = fuse_read_dramid(false);
+ 	mtc_cfg->init_done  = !no_table ? MTC_NEW_MAGIC : MTC_IRB_MAGIC;
+ 
+-	u32 ep_addr = ianos_static_module("bootloader/sys/libsys_minerva.bso", (void *)mtc_cfg);
++	u32 ep_addr = ianos_static_module("bootloader/ns-toolbox/libsys_minerva.bso", (void *)mtc_cfg);
+ 
+ 	// Ensure that Minerva is initialized.
+ 	if (mtc_cfg->init_done == MTC_INIT_MAGIC)
+
+--- a/bootloader/main.c
++++ b/bootloader/main.c
+@@ -579,7 +579,7 @@
+ 
+ static void _nyx_load_run()
+ {
+-	u8 *nyx = sd_file_read("bootloader/sys/nyx.bin", NULL);
++	u8 *nyx = sd_file_read("bootloader/ns-toolbox/nyx.bin", NULL);
+ 	if (!nyx)
+ 		return;
+ 
+@@ -1478,7 +1478,7 @@
+ 
+ 	// Save sdram lp0 config.
+ 	void *sdram_params = h_cfg.t210b01 ? sdram_get_params_t210b01() : sdram_get_params_patched();
+-	if (!ianos_static_module("bootloader/sys/libsys_lp0.bso", sdram_params))
++	if (!ianos_static_module("bootloader/ns-toolbox/libsys_lp0.bso", sdram_params))
+ 		h_cfg.errors |= ERR_LIBSYS_LP0;
+ 
+ 	// Train DRAM and switch to max frequency.
+@@ -1508,8 +1508,8 @@
+ 	// Load saved configuration and auto boot if enabled.
+ 	if (!(h_cfg.errors & ERR_SD_BOOT_EN))
+ 	{
+-		_check_for_updated_bootloader();
+-		_auto_launch();
++		// The temporary payload uses its private Nyx and never overwrites update.bin or autoboots HOS.
++		_nyx_load_run();
+ 	}
+ 
+ 	// Failed to launch Nyx, unmount SD Card.
+
+--- a/nyx/Makefile
++++ b/nyx/Makefile
+@@ -29,7 +29,7 @@
+ # Main and graphics.
+ OBJS =  start exception_handlers nyx heap gfx \
+ 		gui gui_info gui_tools gui_options gui_emmc_tools gui_emummc_tools gui_tools_partition_manager \
+-		fe_emummc_tools fe_emmc_tools
++		fe_emummc_tools fe_emmc_tools ns_task
+ 
+ # Hardware.
+ OBJS += actmon bpmp ccplex clock di vic i2c irq timer \
+
+--- a/nyx/nyx_gui/config.c
++++ b/nyx/nyx_gui/config.c
+@@ -197,7 +197,7 @@
+ 	// Make sure that bootloader folder exists.
+ 	f_mkdir("bootloader");
+ 
+-	if (f_open(&fp, "bootloader/nyx.ini", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
++	if (f_open(&fp, "bootloader/ns-toolbox/nyx.ini", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+ 		return 1;
+ 
+ 	// Add config entry.
+
+--- a/nyx/nyx_gui/frontend/fe_emummc_tools.c
++++ b/nyx/nyx_gui/frontend/fe_emummc_tools.c
+@@ -651,7 +651,9 @@
+ 	{
+ 		mbr_t mbr;
+ 		sdmmc_storage_read(&sd_storage, 0, 1, &mbr);
+-		mbr.partitions[part_idx].type = 0xE0;
++		// Keep the PC-prepared partition hidden from Windows.
++		if (mbr.partitions[part_idx].type != 0xF0)
++			mbr.partitions[part_idx].type = 0xE0;
+ 		sdmmc_storage_write(&sd_storage, 0, 1, &mbr);
+ 	}
+ 
+@@ -823,7 +825,7 @@
+ 	return 1;
+ }
+ 
+-void dump_emummc_raw(emmc_tool_gui_t *gui, int part_idx, u32 sector_start, u32 resized_count)
++int dump_emummc_raw(emmc_tool_gui_t *gui, int part_idx, u32 sector_start, u32 resized_count)
+ {
+ 	int res = 1;
+ 	u32 timer = 0;
+@@ -965,4 +967,5 @@
+ 	free(txt_buf);
+ 	free(gui->base_path);
+ 	sd_unmount();
++	return res;
+ }
+
+--- a/nyx/nyx_gui/frontend/fe_emummc_tools.h
++++ b/nyx/nyx_gui/frontend/fe_emummc_tools.h
+@@ -32,7 +32,7 @@
+ void load_emummc_cfg(emummc_cfg_t *emu_info);
+ void save_emummc_cfg(u32 part_idx, u32 sector_start, const char *path);
+ void dump_emummc_file(emmc_tool_gui_t *gui);
+-void dump_emummc_raw(emmc_tool_gui_t *gui, int part_idx, u32 sector_start, u32 resized_count);
++int dump_emummc_raw(emmc_tool_gui_t *gui, int part_idx, u32 sector_start, u32 resized_count);
+ void update_emummc_base_folder(char *outFilename, u32 sdPathLen, u32 currPartIdx);
+ 
+ int  emummc_raw_derive_bis_keys();
+
+--- a/nyx/nyx_gui/frontend/gui.c
++++ b/nyx/nyx_gui/frontend/gui.c
+@@ -19,6 +19,7 @@
+ #include <bdk.h>
+ 
+ #include "gui.h"
++#include "ns_task.h"
+ #include "gui_emummc_tools.h"
+ #include "gui_tools.h"
+ #include "gui_info.h"
+@@ -924,7 +925,7 @@
+ 		sd_mount();
+ 
+ 		// Check that Nyx still exists.
+-		if (f_stat("bootloader/sys/nyx.bin", NULL))
++		if (f_stat("bootloader/ns-toolbox/nyx.bin", NULL))
+ 		{
+ 			sd_unmount();
+ 
+@@ -2473,6 +2474,14 @@
+ 	// Option save button.
+ 	lv_tabview_set_tab_load_action(tv, _show_hide_save_button);
+ 
++	// Use the existing Chinese emuMMC windows for a prepared PC task.
++	if (ns_task_pending())
++	{
++		lv_task_t *task = lv_task_create(ns_task_start, LV_TASK_ONESHOT, LV_TASK_PRIO_LOWEST, NULL);
++		lv_task_once(task);
++		return;
++	}
++
+ 	// Check if Nyx was launched with a function set.
+ 	if (nyx_str->cfg & NYX_CFG_UMS)
+ 	{
+
+--- a/nyx/nyx_gui/frontend/gui_emummc_tools.c
++++ b/nyx/nyx_gui/frontend/gui_emummc_tools.c
+@@ -19,7 +19,9 @@
+ #include <bdk.h>
+ 
+ #include "gui.h"
++#include "gui_emummc_tools.h"
+ #include "fe_emummc_tools.h"
++#include "ns_task.h"
+ #include "gui_tools_partition_manager.h"
+ #include <libs/fatfs/ff.h>
+ 
+@@ -36,6 +38,7 @@
+ } mbr_ctxt_t;
+ 
+ static bool emummc_backup;
++static bool auto_select_first;
+ static mbr_ctxt_t mbr_ctx;
+ static lv_obj_t *emummc_manage_window;
+ static lv_res_t (*emummc_tools)(lv_obj_t *btn);
+@@ -133,8 +136,11 @@
+ 
+ 	if (!mbr_ctx.part_idx)
+ 		dump_emummc_file(&emmc_tool_gui_ctxt);
+-	else
+-		dump_emummc_raw(&emmc_tool_gui_ctxt, mbr_ctx.part_idx, mbr_ctx.sector_start, mbr_ctx.resized_cnt[mbr_ctx.part_idx - 1]);
++	else if (!ns_task_active() || !ns_task_begin(mbr_ctx.part_idx, mbr_ctx.sector_start, &emmc_tool_gui_ctxt))
++	{
++		int result = dump_emummc_raw(&emmc_tool_gui_ctxt, mbr_ctx.part_idx, mbr_ctx.sector_start, mbr_ctx.resized_cnt[mbr_ctx.part_idx - 1]);
++		ns_task_complete(&emmc_tool_gui_ctxt, result);
++	}
+ 
+ 	nyx_window_toggle_buttons(win, false);
+ }
+@@ -250,6 +256,22 @@
+ 		}
+ 	}
+ 
++	// Equivalent to selecting Part 1 in this original dialog. Capacity detection above is unchanged.
++	bool select_first = auto_select_first;
++	auto_select_first = false;
++	if (select_first && (mbr_ctx.available & BIT(0)))
++	{
++		free(txt_buf);
++		free(mbr);
++		lv_obj_del(dark_bg);
++		mbr_ctx.part_idx = 1;
++		mbr_ctx.sector_start = mbr_ctx.sector[0] + 0x8000;
++		_create_window_emummc();
++		mbr_ctx.part_idx = 0;
++		mbr_ctx.sector_start = 0;
++		return;
++	}
++
+ 	if (mbr_ctx.available)
+ 	{
+ 		s_printf(txt_buf,
+@@ -307,6 +329,15 @@
+ 
+ 	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+ 	lv_obj_set_top(mbox, true);
++}
++
++void create_emummc_raw_auto(bool select_first)
++{
++	create_win_emummc_tools(NULL);
++	if (!nyx_emmc_check_battery_enough())
++		return;
++	auto_select_first = select_first;
++	_create_mbox_emummc_raw();
+ }
+ 
+ static lv_res_t _create_emummc_action(lv_obj_t * btns, const char * txt)
+
+--- a/nyx/nyx_gui/frontend/gui_emummc_tools.h
++++ b/nyx/nyx_gui/frontend/gui_emummc_tools.h
+@@ -21,4 +21,6 @@
+ 
+ lv_res_t create_win_emummc_tools(lv_obj_t *btn);
+ 
++void create_emummc_raw_auto(int select_first);
++
+ #endif
+
+--- a/nyx/nyx_gui/hos/hos.c
++++ b/nyx/nyx_gui/hos/hos.c
+@@ -388,7 +388,7 @@
+ 		 */
+ 
+ 		// Use custom TSEC Hovi Keygen firmware.
+-		tsec_ctxt->fw = sd_file_read("bootloader/sys/thk.bin", NULL);
++		tsec_ctxt->fw = sd_file_read("bootloader/ns-toolbox/thk.bin", NULL);
+ 		if (!tsec_ctxt->fw)
+ 		{
+ 			EPRINTF("\nFailed to load thk.bin");
+
+--- a/nyx/nyx_gui/nyx.c
++++ b/nyx/nyx_gui/nyx.c
+@@ -29,6 +29,7 @@
+ 
+ #include "frontend/fe_emmc_tools.h"
+ #include "frontend/gui.h"
++#include "frontend/ns_task.h"
+ 
+ nyx_config n_cfg;
+ hekate_config h_cfg;
+@@ -109,6 +110,18 @@
+ 	relocator->ep    = payload_dst;
+ }
+ 
++// All cleanup and verification must finish before the SD controller is shut down.
++void ns_task_chainload(void *buffer, uint32_t size)
++{
++    sd_end();
++    memcpy((void *)RCM_PAYLOAD_ADDR, buffer, size);
++    _reloc_append(PATCHED_RELOC_ENTRY, EXT_PAYLOAD_ADDR, ALIGN(size, 0x10));
++    hw_deinit(false);
++    void (*entry)() = (void *)EXT_PAYLOAD_ADDR;
++    (*entry)();
++    while (true) bpmp_halt();
++}
++
+ lv_res_t launch_payload(lv_obj_t *list)
+ {
+ 	const char *filename = lv_list_get_btn_text(list);
+@@ -169,7 +182,7 @@
+ 
+ 	if (ini_parse(&ini_sections, "bootloader/hekate_ipl.ini", false))
+ 	{
+-		create_config_entry();
++		// This temporary payload does not create or replace the publisher's main configuration.
+ 		goto skip_main_cfg_parse;
+ 	}
+ 
+@@ -212,7 +225,7 @@
+ 	ini_free(&ini_sections);
+ 
+ skip_main_cfg_parse:
+-	if (ini_parse(&ini_nyx_sections, "bootloader/nyx.ini", false))
++	if (ini_parse(&ini_nyx_sections, "bootloader/ns-toolbox/nyx.ini", false))
+ 		return;
+ 
+ 	// Load Nyx configuration.
+@@ -276,7 +289,7 @@
+ 	FIL fp;
+ 	int res;
+ 
+-	res = f_open(&fp, "bootloader/sys/res.pak", FA_READ);
++	res = f_open(&fp, "bootloader/ns-toolbox/res.pak", FA_READ);
+ 	if (res)
+ 		return res;
+ 
+
+--- /dev/null
++++ b/nyx/nyx_gui/frontend/ns_task.c
+@@ -0,0 +1,182 @@
++/* Automatic Part 1 selection and one-shot startup handoff for easyworld/hekate.
++ * Creation and its UI remain in the upstream Chinese implementation.
++ * Copyright (c) 2026 NS Toolbox contributors. GPL-2.0-only. */
++#include <bdk.h>
++#include <stdlib.h>
++#include <string.h>
++#include <libs/fatfs/ff.h>
++#include "gui.h"
++#include "gui_emummc_tools.h"
++#include "fe_emummc_tools.h"
++#include "ns_task.h"
++
++static ns_task_t task;
++static emmc_tool_gui_t *current_gui;
++static int active;
++static const char *asset_names[] = { "payload.bin", "nyx.bin", "libsys_minerva.bso", "libsys_lp0.bso", "res.pak", "thk.bin", "nyx.ini", "payload.old", "state.bin" };
++
++static int read_exact(const char *path, void *out, u32 size)
++{
++    FIL fp; UINT n = 0;
++    if (f_open(&fp, path, FA_READ)) return 1;
++    int result = f_size(&fp) != size || f_read(&fp, out, size, &n) || n != size;
++    if (f_close(&fp)) result = 1;
++    return result;
++}
++static int write_exact(const char *path, const void *data, u32 size)
++{
++    FIL fp; UINT n = 0;
++    if (f_open(&fp, path, FA_WRITE | FA_CREATE_ALWAYS)) return 1;
++    int result = f_write(&fp, data, size, &n) || n != size;
++    if (f_sync(&fp)) result = 1;
++    if (f_close(&fp)) result = 1;
++    return result;
++}
++static int unlink_if_present(const char *path)
++{
++    FRESULT r = f_unlink(path); return r != FR_OK && r != FR_NO_FILE && r != FR_NO_PATH;
++}
++static int state_read()
++{
++    ns_task_t restore;
++    int restoring = !f_stat(NS_RESTORE, NULL);
++    if (restoring) {
++        if (!read_exact(NS_RESTORE, &restore, sizeof(restore)) && !memcmp(&restore,&task,sizeof(task)))
++            return 2; // A restore/cleanup transaction must never repeat creation.
++        // A torn first checkpoint write can still use the previously saved completed state.
++    }
++    if (f_stat(NS_DIR "/state.bin", NULL) == FR_NO_FILE) return restoring ? -1 : 0;
++    u8 data[32];
++    if (read_exact(NS_DIR "/state.bin", data, 32) || memcmp(data,"NSSTATE1",8) ||
++        memcmp(data + 8, task.id, 16) || ns_u32(data + 28) != ns_crc(data,28)) return -1;
++    u32 state = ns_u32(data+24); return state == 2 ? 2 : state == 1 && !restoring ? 1 : -1;
++}
++static int state_write(u32 value)
++{
++    u8 data[32] = {0}, check[32];
++    memcpy(data,"NSSTATE1",8); memcpy(data+8,task.id,16);
++    memcpy(data+24,&value,4); u32 crc=ns_crc(data,28); memcpy(data+28,&crc,4);
++    return write_exact(NS_DIR "/state.bin",data,32) || read_exact(NS_DIR "/state.bin",check,32) || memcmp(data,check,32);
++}
++static void *load_original()
++{
++    const char *path = !f_stat(NS_BACKUP,NULL) ? NS_BACKUP : "payload.bin";
++    u32 size = 0; void *buffer = sd_file_read(path, &size); u8 hash[32];
++    if (!buffer) return NULL;
++    if (size != task.payload_size || se_sha_hash_256_oneshot(hash,buffer,size) || memcmp(hash,task.payload_hash,32))
++    { free(buffer); return NULL; }
++    return buffer;
++}
++
++
++static void message(const char *text)
++{
++    if (current_gui) lv_label_set_text(current_gui->label_finish, text);
++    else {
++        lv_obj_t *bg = lv_obj_create(lv_scr_act(), NULL);
++        lv_obj_set_style(bg, &mbox_darken);
++        lv_obj_set_size(bg, LV_HOR_RES, LV_VER_RES);
++        lv_obj_t *box = lv_mbox_create(bg, NULL);
++        lv_obj_set_width(box, LV_HOR_RES / 9 * 6);
++        lv_mbox_set_text(box, text);
++        static const char *buttons[] = { "\222关闭", "" };
++        lv_mbox_add_btns(box, buttons, nyx_mbox_action);
++        lv_obj_align(box, NULL, LV_ALIGN_CENTER, 0, 0);
++        lv_obj_set_top(box, true);
++    }
++    manual_system_maintenance(true);
++}
++static int finish_restore()
++{
++    void *original=load_original();
++    if (!original) { message("原启动文件校验失败, 请连接电脑工具恢复启动."); return 1; }
++    message("正在恢复原启动文件...");
++    ns_task_t checkpoint;
++    if (write_exact(NS_RESTORE,&task,sizeof(task)) || read_exact(NS_RESTORE,&checkpoint,sizeof(checkpoint)) ||
++        memcmp(&checkpoint,&task,sizeof(task))) goto error;
++    // Keep the original backup through copy, rename and read-back verification.
++    if (write_exact("payload.bin.restore",original,task.payload_size)) goto error;
++    u8 *check=malloc(task.payload_size);
++    if (read_exact("payload.bin.restore",check,task.payload_size) || memcmp(check,original,task.payload_size)) { free(check); goto error; }
++    free(check);
++    if (unlink_if_present(NS_DIR "/payload.old")) goto error;
++    if (!f_stat("payload.bin",NULL) && f_rename("payload.bin",NS_DIR "/payload.old")) goto error;
++    if (f_rename("payload.bin.restore","payload.bin")) goto error;
++    check=malloc(task.payload_size);
++    int bad=read_exact("payload.bin",check,task.payload_size) || memcmp(check,original,task.payload_size); free(check);
++    if (bad) goto error;
++    // All code/resources are in RAM. Delete only the task's known private files.
++    for (u32 i=0;i<ARRAY_SIZE(asset_names);i++) {
++        char path[128]; s_printf(path,NS_DIR "/%s",asset_names[i]);
++        if (unlink_if_present(path)) goto error;
++    }
++    // ready.flag also contains the manifest, allowing PC recovery during cleanup.
++    if (unlink_if_present(NS_DIR "/task.bin") || unlink_if_present(NS_DIR) ||
++        unlink_if_present(NS_BACKUP) || unlink_if_present("ready.flag.tmp") || unlink_if_present(NS_READY) || unlink_if_present(NS_RESTORE)) goto error;
++    message("完成, 正在启动原引导...");
++    ns_task_chainload(original,task.payload_size);
++    return 0;
++error:
++    free(original);
++    message("启动文件恢复未完成, 请连接电脑工具恢复启动."); return 1;
++}
++
++int ns_task_pending(void)
++{
++    if (sd_mount()) return 0;
++    int pending = !f_stat(NS_READY, NULL) || !f_stat(NS_RESTORE, NULL);
++    sd_unmount();
++    return pending;
++}
++
++int ns_task_active(void) { return active; }
++
++void ns_task_start(void *unused)
++{
++    current_gui = NULL;
++    active = 0;
++    if (sd_mount()) { message("无法读取SD卡, 请连接电脑工具."); return; }
++    if ((read_exact(NS_READY, &task, sizeof(task)) || !ns_manifest_valid(&task)) &&
++        (read_exact(NS_RESTORE, &task, sizeof(task)) || !ns_manifest_valid(&task)))
++    { message("自动创建标记无效, 请连接电脑工具恢复启动."); return; }
++    int state = state_read();
++    if (state == 2) { finish_restore(); return; }
++    ns_task_t recorded;
++    mbr_t mbr;
++    if (read_exact(NS_DIR "/task.bin", &recorded, sizeof(recorded)) || memcmp(&task, &recorded, sizeof(task)) ||
++        sdmmc_storage_read(&sd_storage, 0, 1, &mbr) || !ns_layout_valid(&task, (u8 *)&mbr, sd_storage.sec_cnt))
++    { message("SD卡与准备任务不一致, 请连接电脑工具."); return; }
++    void *original = load_original();
++    if (!original || state < 0) { free(original); message("原启动文件或任务记录无效, 请连接电脑工具恢复启动."); return; }
++    free(original);
++    active = 1;
++    sd_unmount();
++    // Interrupted tasks use the original partition selection dialog, avoiding an automatic rewrite on every boot.
++    create_emummc_raw_auto(state == 0);
++}
++
++int ns_task_begin(int part, uint32_t sector, void *gui)
++{
++    current_gui = gui;
++    int state = sd_mount() ? -1 : state_read();
++    if (state == 2) { finish_restore(); current_gui = NULL; return 1; }
++    if (state < 0 || part != 1 || sector != task.raw_start + 0x8000 || state_write(1))
++    { message("无法开始第1部分, 请连接电脑工具检查此卡."); current_gui = NULL; return 1; }
++    return 0;
++}
++
++void ns_task_complete(void *gui, int result)
++{
++    if (!active || result) { current_gui = NULL; return; } // Leave upstream error/cancellation messages and files in place.
++    current_gui = gui;
++    if (sd_mount()) { message("无法读取SD卡, 已保留原启动备份."); current_gui = NULL; return; }
++    u32 sector = 0;
++    emummc_cfg_t cfg;
++    load_emummc_cfg(&cfg);
++    int invalid = read_exact("emuMMC/RAW1/raw_based", &sector, 4) || sector != task.raw_start + 0x8000 ||
++        cfg.enabled != 1 || cfg.sector != sector || !cfg.path || strcmp(cfg.path, "emuMMC/RAW1");
++    free(cfg.path); free(cfg.nintendo_path);
++    if (invalid || state_write(2)) { message("创建结果未保存完成, 已保留原启动备份. 请连接电脑工具."); current_gui = NULL; return; }
++    finish_restore();
++    current_gui = NULL;
++}
+
+--- /dev/null
++++ b/nyx/nyx_gui/frontend/ns_task.h
+@@ -0,0 +1,48 @@
++/* NS Toolbox one-shot handoff. GPL-2.0-only; see repository LICENSE. */
++#ifndef NS_TASK_H
++#define NS_TASK_H
++#include <stdint.h>
++#include <string.h>
++#define NS_DIR "bootloader/ns-toolbox"
++#define NS_READY "ready.flag"
++#define NS_RESTORE "ready.flag.restore"
++#define NS_BACKUP "payload.bin.backup"
++typedef struct {
++    uint8_t magic[8];
++    uint32_t version, disk_sectors, signature, main_start, main_count, raw_start, raw_count, full_size, payload_size;
++    uint8_t payload_hash[32], id[16], reserved[32];
++    uint32_t crc;
++} ns_task_t;
++_Static_assert(sizeof(ns_task_t) == 128, "PC/Switch manifest layout");
++static inline uint32_t ns_crc(const void *buffer, uint32_t length) {
++    const uint8_t *p = buffer; uint32_t crc = ~0u;
++    while (length--) { crc ^= *p++; for (int n = 0; n < 8; n++) crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320u : 0); }
++    return ~crc;
++}
++static inline uint32_t ns_u32(const void *ptr) { const uint8_t *b = ptr; return b[0] | (uint32_t)b[1]<<8 | (uint32_t)b[2]<<16 | (uint32_t)b[3]<<24; }
++static inline int ns_manifest_valid(const ns_task_t *t) {
++    uint8_t zeros[32] = {0};
++    return !memcmp(t->magic,"NSTASK01",8) && t->version == 1 && t->disk_sectors && t->signature &&
++        t->main_start == 0x8000 && t->main_count > 0x400000 &&
++        (uint64_t)t->main_start + t->main_count == t->raw_start && t->raw_count >= 0x80F000 &&
++        (uint64_t)t->raw_start + t->raw_count <= t->disk_sectors && t->full_size <= 2 &&
++        t->payload_size >= 0x120 && t->payload_size <= 0x30000 &&
++        !memcmp(t->reserved, zeros, 32) && ns_crc(t, 124) == t->crc;
++}
++static inline int ns_layout_valid(const ns_task_t *t, const uint8_t *m, uint32_t sectors) {
++    uint8_t zeros[32] = {0};
++    return ns_manifest_valid(t) && sectors == t->disk_sectors && ns_u32(m+440) == t->signature &&
++        m[510] == 0x55 && m[511] == 0xAA && (m[450] == 0x0C || m[450] == 7) && m[466] == 0xF0 &&
++        ns_u32(m+454) == t->main_start && ns_u32(m+458) == t->main_count &&
++        ns_u32(m+470) == t->raw_start && ns_u32(m+474) == t->raw_count && !memcmp(m+478,zeros,32);
++}
++static inline int ns_range_valid(const ns_task_t *t, uint32_t start, uint32_t count) {
++    return count && start >= t->raw_start && (uint64_t)start + count <= (uint64_t)t->raw_start + t->raw_count;
++}
++int ns_task_pending(void);
++int ns_task_active(void);
++int ns_task_begin(int part, uint32_t sector, void *gui);
++void ns_task_complete(void *gui, int result);
++void ns_task_start(void *unused);
++void ns_task_chainload(void *buffer, uint32_t size);
++#endif

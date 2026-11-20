@@ -1,0 +1,6 @@
+# 本机路径缓存，由 build.cmd 生成，不应进版本库
+_env.cmd
+_env.sh
+
+# nstask 的编译产物
+nstask/bin/

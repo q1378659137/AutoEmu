@@ -1,0 +1,13 @@
+{
+  "commit": "ff0693843bf17e9a17e047cdda0fdfcd8ea5446a",
+  "hashes": {
+    "bdk/storage/emmc.c": "4787822f9f6561a138bbe5995947a074bc24a52acbf424116c3d674f6b2400b2",
+    "bdk/storage/nx_emmc_bis.c": "e6a699e18a15edf81a3f7943b5d57a493c86326648c3de0744ffb47176cadcca",
+    "bdk/storage/nx_emmc_bis.h": "afb9ed20091dd894c6cf0ccbb302d67150da5107136ddd4905116547fb438874",
+    "bdk/libs/lvgl/lv_fonts/harmony_os_sans_20.c": "fd6be229a63a71203aa113ffc0be0f4298208339721999140b98cd53ba165a9c",
+    "bdk/libs/lvgl/lv_fonts/harmony_os_sans_30.c": "547cb34282ad40a03295b987a069579d99555c0a35568b5764a49ff668990568",
+    "nyx/nyx_gui/frontend/fe_emummc_tools.c": "df7b70be9927e44e1714c0de2678043acd0dc7c58a199724c42161c07f481a00",
+    "creation-ui": "6a31b2a1a7cf665f9256e3e0df05ce3ca7995dfaca73eeb0ecd33260d3958357",
+    "partition-detection": "6e9b592a40e6623d33e415ca086da47248b255f5b3e2d160760b97f04739847c"
+  }
+}

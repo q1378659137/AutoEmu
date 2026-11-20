@@ -1,0 +1,18 @@
+# 同步上游时拉下来的工作树
+.sync/
+# 同步前的基线备份
+baseline/.backup/
+
+# 编译产物
+out/
+baseline/assets/
+baseline/release/
+baseline/firmware/hekate/build/
+baseline/firmware/hekate/output/
+baseline/firmware/build-info.json
+tools/nstask/bin/
+
+# 本机路径缓存（build.cmd 生成）
+tools/_env.cmd
+tools/_env.sh
+tools/_upstream

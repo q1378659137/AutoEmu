@@ -1,0 +1,30 @@
+AutoEmu —— 自动创建 emuMMC 组件的源码工程（纯源码包）
+=====================================================
+打包时间 : 2026-11-21 01:05:22
+上游基线 : easyworld/hekate 6.5.5 / Nyx 1.9.5 @ ff0693843bf17e9a17e047cdda0fdfcd8ea5446a
+许可     : GPL-2.0（见 baseline/firmware/hekate/LICENSE）
+
+本包只有源码，不含任何编译产物
+------------------------------
+已排除：out\、baseline\assets\、baseline\release\、
+        hekate\output\、hekate\build\、build-info.json、tools\_env.*
+保留：  baseline\firmware\resources\ 下的 res.pak / thk.bin —— 构建输入素材，
+        缺了编不出可用的 payload。
+
+怎么用
+------
+双击 build.cmd，出现菜单后输入数字：
+  1 完整构建（源码没变只收拢）   2 强制重编+打包+比对   3 只编译 ARM
+  4 严格校验   5 只收拢产物   6 检查上游更新   7 同步上游并应用
+  8 清理构建产物   9 清除路径缓存
+需要 MSYS2（usr\bin\bash.exe、usr\bin\make.exe）、devkitPro 的 devkitARM、Python 3。
+找不到会提示输入路径并缓存到 tools\_env.cmd / _env.sh。
+
+内容
+----
+build.cmd       菜单入口          tools/rebuild.sh   编译逻辑（MSYS2 内执行）
+tools/sync.py   同步上游          tools/package.py   打这个包
+verify/compare.py  逐字节比对     verify/summary.py  一行结论
+baseline/       完整源码 455 文件（hekate + 本项目改动 + build.py + 主机测试）
+patches/        相对上游的 13 文件改动（unified diff + overlay）
+README.md / UPGRADE.md / SYNC.md / verify-build.md
