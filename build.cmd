@@ -51,6 +51,7 @@ if "%CH%"=="9" set "MODE=reset"
 if /i "%CH%"=="p" set "MODE=prepare"
 if /i "%CH%"=="r" set "MODE=res"
 if /i "%CH%"=="d" set "MODE=onekey"
+if /i "%CH%"=="u" set "MODE=update"
 if /i "%CH%"=="s" goto :pick_source
 if /i "%CH%"=="h" set "MODE=help"
 if not defined MODE (
@@ -120,6 +121,7 @@ rem ------------------------------------------------------------
 if /i "%MODE%"=="help"  goto :usage
 if /i "%MODE%"=="reset" goto :reset
 if /i "%MODE%"=="d"     set "MODE=onekey"
+if /i "%MODE%"=="u"     set "MODE=update"
 
 echo.
 echo   AutoEmu build
@@ -195,7 +197,14 @@ rem This is the "new machine, one command" path: it only needs network for
 rem res.pak / thk.bin; the source tree is already inside this folder.
 if /i "!MODE!"=="onekey" (
     echo.
-    echo == step 1/2: fetch upstream resources ^(res.pak / thk.bin^) ==
+    echo == step 0/3: check upstream ^(read-only, failures are ignored^) ==
+    for /f "tokens=2 delims=:" %%c in ('chcp') do set "OLDCP0=%%c"
+    set "OLDCP0=!OLDCP0: =!"
+    chcp 65001 >nul 2>nul
+    "%PY%" "%HERE%\tools\sync.py" --repo !UPSRC! --quick
+    if defined OLDCP0 chcp !OLDCP0! >nul 2>nul
+    echo.
+    echo == step 1/3: fetch upstream resources ^(res.pak / thk.bin^) ==
     for /f "tokens=2 delims=:" %%c in ('chcp') do set "OLDCPO=%%c"
     set "OLDCPO=!OLDCPO: =!"
     chcp 65001 >nul 2>nul
@@ -216,6 +225,26 @@ if /i "!MODE!"=="onekey" (
             goto :done
         )
         echo   local copies exist, continuing with them.
+    )
+    echo.
+    echo == step 2/3: compile ^+ package ^+ collect ==
+    set "MODE=full"
+)
+
+rem ---------- update: sync upstream (apply), then build ----------
+rem Follow upstream end-to-end: sync --apply backs up baseline first and refuses
+rem to land anything when the patch conflicts, so no half-applied tree. On success
+rem it falls through to the normal full build below.
+if /i "!MODE!"=="update" (
+    echo.
+    echo == step 1/2: sync upstream ^(apply^) ==
+    "%PY%" "%HERE%\tools\sync.py" --repo !UPSRC! --apply
+    set "RC=!ERRORLEVEL!"
+    if not "!RC!"=="0" (
+        echo.
+        echo   [ERROR] sync failed - baseline was NOT replaced ^(or was left as-is^).
+        echo           patch conflict? see SYNC.md section 4 / UPGRADE.md section 3
+        goto :done
     )
     echo.
     echo == step 2/2: compile ^+ package ^+ collect ==
@@ -458,6 +487,7 @@ echo   build.cmd reset    clear the machine-local path cache (tools\_env.cmd)
 echo   build.cmd prepare  write ready.flag / payload.bin(.backup) into the target TF card
 echo   build.cmd res      fetch res.pak ^+ thk.bin from GitHub (auto: current source)
 echo   build.cmd onekey   fetch resources -^> compile -^> package -^> collect (one shot)
+echo   build.cmd update   sync upstream ^(apply^) -^> compile -^> package (follow upstream)
 echo   build.cmd help     this text
 echo.
 echo   menu:  1 auto  2 full  3 arm  4 verify  5 collect

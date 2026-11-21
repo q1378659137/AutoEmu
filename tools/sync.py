@@ -301,6 +301,10 @@ def main():
     ap.add_argument("--repo", default="easyworld", choices=sorted(REPOS))
     ap.add_argument("--apply", action="store_true", help="真正替换 baseline（默认只检查）")
     ap.add_argument("--proxy", default=os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "")
+    ap.add_argument("--quick", action="store_true",
+                    help="只查最新 tag 并与本地比较，不下载源码树（几秒，适合放进一键构建）")
+    ap.add_argument("--force", action="store_true",
+                    help="即使上游版本与本地相同也强制重新拉取并替换 baseline")
     args = ap.parse_args()
 
     if not HK.is_dir() or not (HK / "Makefile").is_file():
@@ -332,6 +336,24 @@ def main():
         log(f"  最新：{tag}  {sha[:12]}")
     else:
         commit = None
+
+    # --quick：只回答"有没有新版"，不下载源码树。一键构建用它做只读提示。
+    if args.quick:
+        new_ver = ref.lstrip("vV")
+        if new_ver == old_ver:
+            log(f"  => 已是最新（本地 {old_ver}）")
+        else:
+            log(f"  => 上游 {new_ver} > 本地 {old_ver}：可用菜单 u 同步并构建")
+        return 0
+
+    # 版本相同就别折腾。baseline 里有我们自己的 11 处改动（main.c / nyx.c /
+    # emummc_tools 等）和 2 个新增文件，差异统计必然报"内容不同 11"，
+    # 那不是"上游有新东西"。只看 tag 才可靠。
+    if (not args.force and args.ref.lower() == "latest"
+            and ref.lstrip("vV") == old_ver):
+        log(f"  => 与本地基线相同（hekate {old_ver}），无需同步。")
+        log("     确实要重新拉一次（例如上游 force-push）：加 --force")
+        return 0
 
     # 工作树每次重建：旧版脚本用 default autocrlf 拉过 CRLF 内容，
     # 复用会让补丁在 CRLF 树上打不干净。空间换确定性，17MB 一次很快。

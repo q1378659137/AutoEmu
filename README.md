@@ -67,6 +67,7 @@ AutoEmu/
     8   清理构建产物      删 build\ output\ assets\ release\ out\
     9   清除路径缓存      下次重新查找 MSYS2 / devkitARM / Python
     d   一键联网构建      取素材 + 编译 + 打包 + 收拢（新机器用这个）
+    u   同步并构建        检查+应用上游更新，然后编译打包（跟上游升级用）
     p   写入任务文件      把 ready.flag / payload.bin(.backup) 直接写进 TF 卡
     r   刷新官方资源      从 GitHub Release 取 res.pak / thk.bin
     s   切换更新源        在 easyworld 与 CTCaer 之间选
@@ -100,6 +101,7 @@ AutoEmu/
 | `build.cmd prepare` / `p` | p | 按一张具体的卡生成 `ready.flag` + `payload.bin` | 秒级 |
 | `build.cmd res` / `r` | r | 从 GitHub 取 `res.pak` / `thk.bin`（两个上游素材） | 秒级 |
 | `build.cmd onekey` / `d` | d | **取素材 → 编译 → 打包 → 收拢**（一条命令走完） | 约 2–5 分钟 |
+| `build.cmd update` / `u` | u | **同步上游并应用 → 编译 → 打包**（跟上游升级） | 约 3–6 分钟 |
 
 ## 六个组件从哪来（不再依赖原始 zip）
 
@@ -160,23 +162,51 @@ build.cmd res --repo ctcaer --ref 6.5.5
 build.cmd onekey     :: 或直接 build.cmd d
 ```
 
-它等价于「菜单 r + 菜单 2」，但一次执行完：
+三步，一次执行完：
 
 ```
-== step 1/2: fetch upstream resources (res.pak / thk.bin) ==
+== step 0/3: check upstream (read-only, failures are ignored) ==
+  最新：v6.5.5  ff0693843bf1
+  => 已是最新（本地 6.5.5）
+== step 1/3: fetch upstream resources (res.pak / thk.bin) ==
   已下载 1,140,778 字节        ← easyworld/hekate release (仅取 res.pak)
   已下载 7,936 字节 4c044348…  ← Atmosphere raw (tsec_keygen.bin)
   res.pak  405,504  相同
   thk.bin    7,936  相同
-== step 2/2: compile + package + collect ==
+== step 2/3: compile + package + collect ==
   [PASS] All ARM artifacts are byte-identical to the shipped ones.
 ```
 
-联网失败时会先看本地有没有这两个文件：有就继续编，没有才中止（并打印代理提示）。
+- **step 0** 只查最新 tag（`sync.py --quick`），**不下载源码树**、不改任何文件；
+  离线或查询失败时直接跳过，不影响后面编译。
+- **step 1** 就是菜单 `r` 做的事（`fetch_res.py`）。
+- **step 2** 是菜单 `2`（full）+ 收拢。
+
+联网失败时会先看本地有没有那两个文件：有就继续编，没有才中止（并打印代理提示）。
 
 实测（把 `resources\res.pak` 与 `resources\thk.bin` 都移走、`output\`/`assets\`/`out\` 全删）：
 **2 分 04 秒，rc=0，四个 ARM 产物与发布件逐字节相同**，
 包内 `sha256.json` 与 6 个组件逐条相符。
+
+### 为什么「同步上游」单独做成 u，而不是塞进 d
+
+`d` 的目标是**可预期的出包**：输入（源码 + 两个素材）不动，产出就不该变。
+菜单 `7`（`sync --apply`）会**替换 baseline**、重打补丁，属于改变输入的操作：
+
+- 上游新版可能不兼容当前固件（例如 6.5.5 只支持 HOS 23.5.0）；
+- 补丁可能冲突，需要人看差异再决定怎么合并；
+- 升级后必须重新实机验收，不能"编完就当能用"。
+
+所以拆成两个入口：
+
+```bat
+build.cmd d          :: 只取素材 + 编译（不动源码）
+build.cmd u          :: sync --apply -> 编译 -> 打包（跟上游升级）
+```
+
+`u` 的安全边界：`sync.py --apply` 会先备份 `baseline/.backup/hekate-<旧版本>-<时间>.zip`，
+补丁冲突时**拒绝落盘**，失败即退出且不会进入编译段。当前已是最新时它会打印
+「与当前基线内容一致，无需同步」，然后照常编译。
 
 ### zip 里的时间戳：每次构建都刷新
 

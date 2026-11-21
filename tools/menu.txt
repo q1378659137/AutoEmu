@@ -12,6 +12,7 @@
     8   清理构建产物      删 build\ output\ assets\ release\ out\
     9   清除路径缓存      下次重新查找 MSYS2 / devkitARM / Python
     d   一键联网构建      取素材 + 编译 + 打包 + 收拢（新机器用这个）
+    u   同步并构建        检查+应用上游更新，然后编译打包（跟上游升级用）
     p   写入任务文件      把 ready.flag / payload.bin(.backup) 直接写进 TF 卡
     r   刷新官方资源      从 GitHub Release 取 res.pak / thk.bin
     s   切换更新源        在 easyworld 与 CTCaer 之间选
