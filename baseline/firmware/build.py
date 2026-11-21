@@ -2,6 +2,7 @@
 """Rebuild or verify the pinned one-shot hekate component; never fetch a moving release."""
 import hashlib
 import io
+import time
 import tempfile
 import json
 import os
@@ -33,9 +34,13 @@ def source_hash():
     return h.hexdigest()
 
 def zip_bytes(target, files):
+    # 用真实时间戳：ZipInfo 的 date_time 默认是 1980-01-01（不是当前时间），
+    # 必须显式传当前本地时间。这样每次真正打包出来的 zip 条目时间都反映本次
+    # 构建；内容一致性仍靠 sha256.json 逐文件核对，不依赖 zip 容器元数据。
+    stamp = time.localtime()[:6]
     with zipfile.ZipFile(target,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
         for name,data in sorted(files.items()):
-            entry=zipfile.ZipInfo(name,(2026,10,28,0,0,0)); entry.compress_type=zipfile.ZIP_DEFLATED
+            entry=zipfile.ZipInfo(name,stamp); entry.compress_type=zipfile.ZIP_DEFLATED
             archive.writestr(entry,data)
 
 def build():
@@ -57,7 +62,10 @@ def build():
     if info_path.exists() and bundle.exists():
         info=json.loads(info_path.read_text())
         valid=info.get("sourceHash")==digest and info.get("bundleHash")==hashlib.sha256(bundle.read_bytes()).hexdigest()
-    if not valid:
+    # NS_FORCE_REPACK=1：源码没变也重新走一遍 make + 打包，让 zip 里的时间戳
+    # 反映这次构建。rebuild.sh 的 full 分支会设置它（arm 分支不设置）。
+    force_repack=os.environ.get("NS_FORCE_REPACK")=="1"
+    if not valid or force_repack:
         devkit=os.environ.get("DEVKITARM", "/opt/devkitpro/devkitARM")
         if not (Path(devkit)/"base_rules").exists():
             raise RuntimeError("自动创建组件源码已改变，请安装 devkitARM 后重编译 firmware/build.py。")

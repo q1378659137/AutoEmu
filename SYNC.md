@@ -114,7 +114,7 @@ set HTTPS_PROXY=http://127.0.0.1:10808
 2. 用上游树替换（保留 `output/` 以外的源码）
 3. `git apply patches/autotask.patch`（13 文件改动）
 4. **自检**：`ns_task.c/h` 在、`nyx/Makefile` 有 `ns_task`、`main.c` 有 `ns-toolbox` —— 任一不满足就报错并提示备份位置
-5. 从 CTCaer 对应 release 取 `res.pak` / `thk.bin`（内容相同则跳过）
+5. 取上游素材 `res.pak` / `thk.bin`（`res.pak` 从 hekate release，`thk.bin` 优先 Atmosphere 源码仓库；内容相同则跳过）
 6. 更新 `firmware/UPSTREAM.md` 的版本与提交，删除 `build-info.json`（强制重编）
 7. 打印下一步
 
@@ -168,9 +168,14 @@ grep -ri "atmosphere" baseline/firmware/hekate --include=*.c --include=*.h | wc 
 |---|---|---|
 | `libsys_minerva.bso` | hekate 的 `modules/hekate_libsys_minerva`，上游是 `CTCaer/minerva_tc`（README 里写着 `(c) 2018 CTCaer`） | 跟着 hekate 源码一起编 |
 | `libsys_lp0.bso` | hekate 的 `modules/hekate_libsys_lp0` | 同上 |
-| `res.pak` / `thk.bin` | **CTCaer hekate release** 的 `bootloader/sys/` 里，预制资源，不从源码编 | `sync --apply` 自动取 |
+| `thk.bin` | **Atmosphere 源码仓库** `fusee/program/tsec_keygen/tsec_keygen.bin` —— 实测与本文件**逐字节相同**（`4c044348…`，7,936 字节）。hekate README 自称「Atmosphère Tsec Hovi 密钥生成器」 | `build.cmd res`（自动模式下先取 Atmosphere，再与 release 交叉校验） |
+| `res.pak` | **hekate release** 的 `bootloader/sys/`；源码里没有，也无法重建（字体位图是 TTF 转的，仓库不含 TTF） | `build.cmd res` 或 `sync --apply` 自动取 |
 
-所以 **Atmosphère 发新版本时，这个组件不需要做任何事**。
+也就是说 `thk.bin` 原本就属于 Atmosphère，只是随 hekate 一起分发；`res.pak` 是 hekate 的发布件。
+两者都是跨版本稳定的（6.5.4 → 6.5.5 均未变）。
+
+所以 **Atmosphère 发新版本时，这个组件不需要做任何事**（除非它的 `tsec_keygen.bin` 变了，
+那时 `build.cmd res` 会告警并让你决定是否采用）。
 
 真正需要跟 Atmosphère 的是**整合包里的 `atmosphere/` 目录**（AMS 本体、sysmodules、
 `package3`、`fusee.bin`）—— 那是主程序「一键换包」的职责：它从
@@ -279,7 +284,11 @@ Command ... tests/upstream_test.py returned non-zero exit status 1
 | `out\nyx.bin` | 1,410,409 | `616dbe052ed258e13989b8a898610a2ba6197f765c4c4c9b937f051dbf8d15f4` |
 | `out\libsys_minerva.bso` | 147,380 | `18e43c399914362afcf3666ef9c2524ba647c2fcd400edaffee9b082eb5467f4` |
 | `out\libsys_lp0.bso` | 33,372 | `8b0d547438083b63986687d487454a591e7b558cf3f9147cea015412c8eccaad` |
-| `out\auto-emu.zip` | 2,821,461 | `cc0c8c5dd710103e141baa0ecaaeb19b74bc2d873fa3c935bedda3742c15e2e0` |
+| `out\auto-emu.zip` | 2,821,461 | `cc0c8c5dd710103e…`（**当时**的整包哈希） |
+
+> 上表的 `auto-emu.zip` 哈希仅代表 2026-11-21 那次记录。`build.py` 现已改为
+> 写本次打包时间戳，**整包哈希每次构建都会变**；要核对内容请看包内 `sha256.json`。
+> 四个 ARM 产物的哈希仍然稳定（同一源码同一工具链恒定）。
 
 `payload.bin` 与 `nyx.bin` 变了（上游改 pkg1/pkg2 与 Nyx 1.9.5），两个 sysmodule
 和 `res.pak`/`thk.bin` 没变 —— 与上游改动面一致。`sha256.json` 里是大写哈希，

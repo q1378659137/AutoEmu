@@ -46,7 +46,11 @@ AutoEmu/
 
 ### 1. 一键编译（推荐）
 
-**双击 `build.cmd`，出现菜单，输入数字回车。**
+**最省事：菜单里按 `d`（一键联网构建）。** 它依次做：取 `res.pak`/`thk.bin` →
+编译 → 打包 → 收拢到 `out\`。新机器上只需要准备 MSYS2 + devkitARM + Python，
+其余全由这一个脚本完成。
+
+**双击 `build.cmd`，出现菜单，输入编号回车。**
 
 ```
   ================================================================
@@ -62,7 +66,9 @@ AutoEmu/
     7   同步上游并应用    替换 baseline（自动先备份）
     8   清理构建产物      删 build\ output\ assets\ release\ out\
     9   清除路径缓存      下次重新查找 MSYS2 / devkitARM / Python
-    p   生成任务文件      按一张具体的卡生成 ready.flag + payload.bin
+    d   一键联网构建      取素材 + 编译 + 打包 + 收拢（新机器用这个）
+    p   写入任务文件      把 ready.flag / payload.bin(.backup) 直接写进 TF 卡
+    r   刷新官方资源      从 GitHub Release 取 res.pak / thk.bin
     s   切换更新源        在 easyworld 与 CTCaer 之间选
     h   帮助
     0   退出
@@ -92,6 +98,126 @@ AutoEmu/
 | `build.cmd clean` / `8` | 8 | 删 `build/ output/ assets/ release/ build-info.json out/` | — |
 | `build.cmd reset` / `9` | 9 | 清掉路径缓存 | — |
 | `build.cmd prepare` / `p` | p | 按一张具体的卡生成 `ready.flag` + `payload.bin` | 秒级 |
+| `build.cmd res` / `r` | r | 从 GitHub 取 `res.pak` / `thk.bin`（两个上游素材） | 秒级 |
+| `build.cmd onekey` / `d` | d | **取素材 → 编译 → 打包 → 收拢**（一条命令走完） | 约 2–5 分钟 |
+
+## 六个组件从哪来（不再依赖原始 zip）
+
+写卡用的 6 个文件，来源是两条互不重叠的线：
+
+| 组件 | 来源 | 能否自己产出 |
+|---|---|---|
+| `payload.bin` | `out\hekate.bin` | **能**，就是编译产物 |
+| `nyx.bin` | `out\nyx.bin` | **能** |
+| `libsys_minerva.bso` / `libsys_lp0.bso` | `out\libsys_*.bso` | **能** |
+| `thk.bin` | **Atmosphere 源码仓库** `fusee/program/tsec_keygen/tsec_keygen.bin` | **能拿到**（仓库里就有这份 7,936 字节的二进制） |
+| `res.pak` | **hekate Release** 附件 `bootloader/sys/res.pak` | **不能**，只能取发布件 |
+
+**`thk.bin` 已实测确认**：从 Atmosphere 仓库 raw 直链下载的那份与本地
+**逐字节相同**（`4c04434899d04a364fe9cb98aa98c0a3`）。hekate 的 README 也写着
+「Atmosphère Tsec Hovi 密钥生成器」。
+
+**`res.pak` 为什么不能从源码重建**（这是硬结论，不是没找）：
+
+* hekate 仓库根 `res/` 只有 bootlogo 和两个 ini 模板，没有 `res.pak`；
+* 没有任何 Makefile / 脚本生成它 —— `nyx.c` 只是把文件原样读到 `NYX_RES_ADDR`；
+* 它的内容是 **7 段字体位图 + 2 段 logo**，偏移硬编码在源码里：
+
+  ```
+  0x00000  ubuntu_mono          bdk/libs/lvgl/lv_fonts/ubuntu_mono.c
+  0x03A00  interui_20           interui_20.c
+  0x07900  interui_30           interui_30.c
+  0x0FC00  hekate_symbol_20     hekate_symbol_20.c
+  0x14200  hekate_symbol_30     hekate_symbol_30.c
+  0x1D900  logo 1               nyx_gui/gfx/logos-gui.h
+  0x2BF00  logo 2               logos-gui.h
+  0x36E00  hekate_symbol_120    hekate_symbol_120.c
+  ```
+
+  而字体位图是 **TTF 经 lvgl 转换工具**生成的，仓库里
+  `find -iname '*.ttf' -o -iname '*.otf'` **结果为空** —— 字体源文件根本没随源码发布。
+  没有 TTF、没有生成参数，就不可能复现出同一个 `res.pak`。
+
+所以 `res.pak` 只能从 GitHub Release 取。它同时是**跨版本稳定**的：
+6.5.4 与 6.5.5 的 `res.pak` 完全一致（`3570aa7a…`），`thk.bin` 也没变。
+
+### 菜单 r 做什么
+
+```bat
+build.cmd res                    :: 自动：thk 先取 Atmosphere，再与 release 交叉校验
+build.cmd res --check            :: 只比对不写
+build.cmd res --thk-source ams   :: 只认 Atmosphere 源码仓库
+build.cmd res --thk-source release
+build.cmd res --repo ctcaer --ref 6.5.5
+```
+
+`auto` 模式会同时下 Atmosphere 的 `tsec_keygen.bin` 和 hekate release 的 `thk.bin`：
+两者一致就用 Atmosphere 那份；不一致则用 release 那份（与当前 hekate 配套）并打印两份哈希。
+
+### 一条命令走完全流程（菜单 d）
+
+```bat
+build.cmd onekey     :: 或直接 build.cmd d
+```
+
+它等价于「菜单 r + 菜单 2」，但一次执行完：
+
+```
+== step 1/2: fetch upstream resources (res.pak / thk.bin) ==
+  已下载 1,140,778 字节        ← easyworld/hekate release (仅取 res.pak)
+  已下载 7,936 字节 4c044348…  ← Atmosphere raw (tsec_keygen.bin)
+  res.pak  405,504  相同
+  thk.bin    7,936  相同
+== step 2/2: compile + package + collect ==
+  [PASS] All ARM artifacts are byte-identical to the shipped ones.
+```
+
+联网失败时会先看本地有没有这两个文件：有就继续编，没有才中止（并打印代理提示）。
+
+实测（把 `resources\res.pak` 与 `resources\thk.bin` 都移走、`output\`/`assets\`/`out\` 全删）：
+**2 分 04 秒，rc=0，四个 ARM 产物与发布件逐字节相同**，
+包内 `sha256.json` 与 6 个组件逐条相符。
+
+### zip 里的时间戳：每次构建都刷新
+
+`build.py` 不再写死 `2026-10-28 00:00:00`，而是写**本次打包的本地时间**：
+
+```
+LICENSE.txt            date_time=(2026, 11, 21, 19, 27, 12)
+payload.bin            date_time=(2026, 11, 21, 19, 27, 12)
+... 9 个条目都是同一时刻
+```
+
+配套改动：`full` / `verify` 模式会带 `NS_FORCE_REPACK=1` 调 `build.py`，
+即使 `sourceHash` 没变也重新打包一次（`make` 是增量的，几秒），
+所以每次构建的整包哈希都会不同 —— 这是预期行为。
+
+连续两次实测：
+
+```
+第1次: 756e720de48959c12c96
+第2次: 92d10dafcd514a5d9df2      ← 内容相同，仅时间戳不同
+```
+
+**判断内容是否一致仍看 `sha256.json`，不要看整包哈希**。
+
+需要你自备的只有三样：MSYS2（含 `bash`/`make`）、devkitARM、Python 3。
+脚本会自动探测；找不到就问你路径，并记进 `tools\_env.cmd` / `_env.sh`。
+
+### 原始 `NsToolbox.AutoEmu.zip` 现在完全不需要
+
+`prepare.py` 只读 `out\` 与 `baseline\firmware\resources\`，**已删掉读 zip 的分支**。
+实测把 `src\NsToolbox.App\NsToolbox.AutoEmu.zip` 改名移走后，写卡依然成功：
+
+```
+组件来源：payload.bin <- out/hekate.bin，nyx.bin <- out/nyx.bin，
+          libsys_minerva.bso <- out/libsys_minerva.bso，libsys_lp0.bso <- out/libsys_lp0.bso，
+          res.pak <- resources/res.pak，thk.bin <- resources/thk.bin
+nstask dump 退出码 0（CRC32 通过 / 与 MBR 一致）
+```
+
+主程序侧也一样：用 `out\auto-emu.zip` 覆盖 `src\NsToolbox.App\NsToolbox.AutoEmu.zip`
+后重编，dll 里嵌入的是自建包（2,821,461 字节），原件（2,819,877 字节）已不在其中。
 
 ## payload.bin 与 ready.flag 从哪来
 
@@ -154,7 +280,23 @@ H:\bootloader\ns-toolbox\payload.bin + nyx.bin + libsys_minerva.bso
 **原 payload 从卡上现有的 `payload.bin` 自动取**，不用另外找文件；生成完它就成了
 `payload.bin.backup`。如果卡上原本没有 `payload.bin`，可以用 `--payload <文件>` 指定。
 
-只想生成文件、不写卡时（例如先检查参数）：
+**写进卡的 6 个组件从哪来**：
+
+| 组件 | 取自 |
+|---|---|
+| `payload.bin` | `out\hekate.bin`（最近一次编译出来的 hekate） |
+| `nyx.bin`、`libsys_minerva.bso`、`libsys_lp0.bso` | `out\` 同名文件 |
+| `res.pak`、`thk.bin` | `auto-emu.zip`（构建素材，不从源码编） |
+
+只跑 `build.cmd arm`（菜单 3）时不会重打 `auto-emu.zip`，里面还是上一次 full 的内容。
+所以脚本**优先用 `out\` 的散文件**；如果发现 zip 里的同名文件与散文件不同，会打印
+
+```
+[注意] auto-emu.zip 里的 payload.bin、nyx.bin 与 out\ 的新产物不一致（那是旧的整包）—— 已按 out\ 的散文件写入。
+       想让整包也跟上，跑一次菜单 2（强制重新编译 + 打包）。
+```
+
+也就是说：**写卡永远用最近一次编译的二进制**，不会因为忘了打整包而写进旧 payload。只想生成文件、不写卡时（例如先检查参数）：
 
 ```bat
 build.cmd prepare --deploy H: --out out\prepare   :: 两边都留一份

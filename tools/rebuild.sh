@@ -178,6 +178,11 @@ esac
 [ -f "$DEVKITARM/base_rules" ] || die "devkitARM 不完整：$DEVKITARM/base_rules 不存在
   期望位置：<MSYS2>/opt/devkitpro/devkitARM"
 
+# hekate 的 Makefile 用 objcopy 直接写 output/xxx，不会自己建目录；
+# clean 又把 output/ 删了。所以每次编译前必须确保它在，否则干净树上必然
+# 报 "cannot open output file ../../output/libsys_*.bso"。
+mkdir -p "$HK/output" || die "无法创建 $HK/output"
+
 # auto（默认）：源码没变且产物齐全时只收拢，不重编；否则走 full
 if [ "$MODE" = "auto" ]; then
     if [ -f "$FW/build-info.json" ] && [ -f "$BASE/assets/auto-emu.zip" ] && [ -f "$HK/output/hekate.bin" ]; then
@@ -232,7 +237,10 @@ fi
 log "端到端构建（主机测试 → make → 打包）"
 printf '  Python    : %s\n' "$PY"
 mkdir -p "$BASE/assets" "$BASE/release" || die "无法创建 assets/ release/"
-( cd "$FW" && "$PY" build.py ) || die "build.py 失败（详见上面的输出）"
+# full/verify 一律重新打包：让 auto-emu.zip 里条目的时间戳反映本次构建。
+# build.py 平时会因 sourceHash 未变而跳过打包，设这个变量可强制走一遍
+# （make 是增量的，几秒；zip 条目时间会刷新）。
+( export NS_FORCE_REPACK=1; cd "$FW" && "$PY" build.py ) || die "build.py 失败（详见上面的输出）"
 
 say_artifacts
 log "整包"

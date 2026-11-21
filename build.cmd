@@ -49,6 +49,8 @@ if "%CH%"=="7" set "SYNCARGS=--repo !UPSRC! --apply"
 if "%CH%"=="8" set "MODE=clean"
 if "%CH%"=="9" set "MODE=reset"
 if /i "%CH%"=="p" set "MODE=prepare"
+if /i "%CH%"=="r" set "MODE=res"
+if /i "%CH%"=="d" set "MODE=onekey"
 if /i "%CH%"=="s" goto :pick_source
 if /i "%CH%"=="h" set "MODE=help"
 if not defined MODE (
@@ -117,6 +119,7 @@ rem ------------------------------------------------------------
 :dispatch
 if /i "%MODE%"=="help"  goto :usage
 if /i "%MODE%"=="reset" goto :reset
+if /i "%MODE%"=="d"     set "MODE=onekey"
 
 echo.
 echo   AutoEmu build
@@ -167,6 +170,56 @@ if /i "!MODE!"=="prepare" (
         set "RC=0"
     )
     goto :done
+)
+
+rem ---------- refresh res.pak / thk.bin from GitHub release ----------
+if /i "!MODE!"=="res" (
+    echo.
+    echo == fetch res.pak / thk.bin from the GitHub release ==
+    for /f "tokens=2 delims=:" %%c in ('chcp') do set "OLDCPR=%%c"
+    set "OLDCPR=!OLDCPR: =!"
+    chcp 65001 >nul 2>nul
+    set "RARGS="
+    for /f "tokens=1,*" %%a in ("%*") do set "RARGS=%%b"
+    if not "!RARGS!"=="" goto :res_run
+    set "RARGS=--repo !UPSRC!"
+  :res_run
+    "%PY%" "%HERE%\tools\fetch_res.py" !RARGS!
+    set "RC=!ERRORLEVEL!"
+    if defined OLDCPR chcp !OLDCPR! >nul 2>nul
+    goto :done
+)
+
+rem ---------- one key: fetch upstream resources, then build ----------
+rem This is the "new machine, one command" path: it only needs network for
+rem res.pak / thk.bin; the source tree is already inside this folder.
+if /i "!MODE!"=="onekey" (
+    echo.
+    echo == step 1/2: fetch upstream resources ^(res.pak / thk.bin^) ==
+    for /f "tokens=2 delims=:" %%c in ('chcp') do set "OLDCPO=%%c"
+    set "OLDCPO=!OLDCPO: =!"
+    chcp 65001 >nul 2>nul
+    "%PY%" "%HERE%\tools\fetch_res.py" --repo !UPSRC!
+    set "RC=!ERRORLEVEL!"
+    if defined OLDCPO chcp !OLDCPO! >nul 2>nul
+    if not "!RC!"=="0" (
+        echo.
+        echo   [WARN] resource fetch failed ^(offline? set HTTPS_PROXY=http://127.0.0.1:10808^)
+        if not exist "%HERE%\baseline\firmware\resources\res.pak" (
+            echo   [ERROR] res.pak missing and cannot be downloaded - abort.
+            set "RC=1"
+            goto :done
+        )
+        if not exist "%HERE%\baseline\firmware\resources\thk.bin" (
+            echo   [ERROR] thk.bin missing and cannot be downloaded - abort.
+            set "RC=1"
+            goto :done
+        )
+        echo   local copies exist, continuing with them.
+    )
+    echo.
+    echo == step 2/2: compile ^+ package ^+ collect ==
+    set "MODE=full"
 )
 
 rem ---------- sync upstream ----------
@@ -226,6 +279,7 @@ if /i "!MODE!"=="help" goto :done_pause
 if /i "!MODE!"=="reset" goto :done_pause
 if /i "!MODE!"=="clean" goto :done_pause
 if /i "!MODE!"=="prepare" goto :done_pause
+if /i "!MODE!"=="res" goto :done_pause
 if /i "!MODE!"=="collect" goto :tip_plain
 
 echo.
@@ -402,6 +456,8 @@ echo     build.cmd sync --repo ctcaer --ref v6.5.5 --apply   example
 echo   build.cmd clean    remove build\ output\ assets\ release\ build-info.json out\
 echo   build.cmd reset    clear the machine-local path cache (tools\_env.cmd)
 echo   build.cmd prepare  write ready.flag / payload.bin(.backup) into the target TF card
+echo   build.cmd res      fetch res.pak ^+ thk.bin from GitHub (auto: current source)
+echo   build.cmd onekey   fetch resources -^> compile -^> package -^> collect (one shot)
 echo   build.cmd help     this text
 echo.
 echo   menu:  1 auto  2 full  3 arm  4 verify  5 collect

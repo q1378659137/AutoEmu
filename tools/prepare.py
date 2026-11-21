@@ -43,12 +43,22 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SRC = ROOT / "out" / "hekate.bin"
-BUNDLE = ROOT / "out" / "auto-emu.zip"
-BUNDLE_ALT = ROOT.parents[1] / "NsToolbox.App" / "NsToolbox.AutoEmu.zip"
+OUT = ROOT / "out"
+DEFAULT_SRC = OUT / "hekate.bin"
+# 构建素材：从 GitHub Release 取（tools/fetch_res.py，菜单 r）。
+# 不再从 NsToolbox.AutoEmu.zip 里拿 —— 那条路已彻底断开。
+RES = ROOT / "baseline" / "firmware" / "resources"
 NSTASK = ROOT / "tools" / "nstask" / "bin" / "nstask.exe"
 NS_DIR = "bootloader/ns-toolbox"
 ASSETS = ["payload.bin", "nyx.bin", "libsys_minerva.bso", "libsys_lp0.bso", "res.pak", "thk.bin"]
+
+# 四份是编译产物（out\ 散文件）；res.pak / thk.bin 是上游素材（resources\）
+SCATTERED = {
+    "payload.bin": "hekate.bin",
+    "nyx.bin": "nyx.bin",
+    "libsys_minerva.bso": "libsys_minerva.bso",
+    "libsys_lp0.bso": "libsys_lp0.bso",
+}
 
 MAGIC = b"NSTASK01"
 VERSION = 1
@@ -185,19 +195,41 @@ def self_check(manifest: bytes, mbr: bytes, sectors: int):
 
 
 def load_assets():
-    """从 auto-emu.zip 取 6 个自动创建组件。"""
-    for z in (BUNDLE, BUNDLE_ALT):
-        if not z.is_file():
-            continue
-        import zipfile
-        try:
-            with zipfile.ZipFile(z) as zf:
-                names = set(zf.namelist())
-                if set(ASSETS) <= names:
-                    return {n: zf.read(n) for n in ASSETS}, z
-        except (zipfile.BadZipFile, OSError):
-            continue
-    return None, None
+    """取 6 个自动创建组件，两条来源互不重叠。
+
+    4 个编译产物 ← out/ 的散文件（最近一次编译的结果）
+    2 个上游素材 ← baseline/firmware/resources/（由 tools/fetch_res.py 从 GitHub 取）
+
+    **不再读 NsToolbox.AutoEmu.zip**：那个 zip 是给别人分发的整包，
+    这里拿它当来源会让"只跑 arm（菜单 3）没重打 zip"时把旧 payload 写进卡。
+    """
+    assets = {}
+    used = []
+
+    for name, fname in SCATTERED.items():
+        p = OUT / fname
+        if p.is_file():
+            assets[name] = p.read_bytes()
+            used.append(f"{name} <- out/{fname}")
+
+    for name in ("res.pak", "thk.bin"):
+        p = RES / name
+        if p.is_file():
+            assets[name] = p.read_bytes()
+            used.append(f"{name} <- resources/{name}")
+
+    missing = [n for n in ASSETS if n not in assets]
+    if missing:
+        print(f"[失败] 缺组件：{'、'.join(missing)}")
+        for n in missing:
+            if n in SCATTERED:
+                print(f"        {n} 需要先编译：菜单 2（或 3）")
+            else:
+                print(f"        {n} 是上游素材，需要联网从 GitHub 取：菜单 r")
+        return None
+
+    print(f"  组件来源：{'，'.join(used)}")
+    return assets
 
 
 def write_verified(path: Path, data: bytes):
@@ -523,9 +555,8 @@ def main(argv):
             return 42          # build.cmd 收到 42 会提示"已在新窗口继续"
         return 1
 
-    assets, bundle = load_assets()
+    assets = load_assets()
     if not assets:
-        print("[失败] 找不到含 6 个组件的 auto-emu.zip（先在菜单里选 2 编一次）", file=sys.stderr)
         return 1
 
     mbr = None
