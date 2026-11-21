@@ -27,6 +27,7 @@ AutoEmu/
 │  ├─ menu.txt             菜单文案（UTF-8，由 build.cmd 在 65001 下 type 出来）
 │  ├─ rebuild.sh           真正的编译逻辑（由 build.cmd 在 MSYS2 里调用）
 │  ├─ sync.py              同步上游 hekate（拉取 → 检查补丁 → 可选替换）
+│  ├─ prepare.py           按一张卡生成 ready.flag / task.bin，并备好 payload.bin
 │  ├─ package.py           把本工程打成纯源码 zip
 │  └─ nstask/              PC 侧协议工具（纯 C，无第三方依赖）
 └─ verify/
@@ -61,6 +62,7 @@ AutoEmu/
     7   同步上游并应用    替换 baseline（自动先备份）
     8   清理构建产物      删 build\ output\ assets\ release\ out\
     9   清除路径缓存      下次重新查找 MSYS2 / devkitARM / Python
+    p   生成任务文件      按一张具体的卡生成 ready.flag + payload.bin
     s   切换更新源        在 easyworld 与 CTCaer 之间选
     h   帮助
     0   退出
@@ -89,6 +91,99 @@ AutoEmu/
 | `build.cmd sync --apply` | 7 | 同上但真正替换 `baseline\`（会先备份） | 约 1 分钟 |
 | `build.cmd clean` / `8` | 8 | 删 `build/ output/ assets/ release/ build-info.json out/` | — |
 | `build.cmd reset` / `9` | 9 | 清掉路径缓存 | — |
+| `build.cmd prepare` / `p` | p | 按一张具体的卡生成 `ready.flag` + `payload.bin` | 秒级 |
+
+## payload.bin 与 ready.flag 从哪来
+
+| 文件 | 能不能"编译出来" | 说明 |
+|---|---|---|
+| **`payload.bin`** | **能**，就是编译产物 | `out\hekate.bin` 改名即可，两者逐字节相同（107,236 字节 / `a9aacc51…`）。`auto-emu.zip` 里的 `payload.bin` 也是同一份。 |
+| **`ready.flag`** | **不能预生成**，只能"按卡生成" | 128 字节清单，里面是这张卡的 `disk_sectors`、MBR 偏移 440 的随机磁盘签名、主/emuMMC 分区的起止扇区，外加**卡上原来那个 payload** 的大小与 SHA-256。Switch 侧 `ns_layout_valid()` 会把清单与卡上的 MBR 逐项比对，任何一项不符就报「SD卡与准备任务不一致」。 |
+
+所以流程只能是：**先把卡按工具布局分好区（写 MBR），再为这张卡生成 `ready.flag`**。
+
+菜单里按 `p`（或 `build.cmd prepare`）就是干这件事，**产物直接写进那张卡，不落 `out\`**：
+
+```bat
+:: 卡插着，交互输入盘符（读 MBR 需要管理员）
+build.cmd prepare
+
+:: 指定盘符 + 物理盘号（读 MBR 与容量）
+build.cmd prepare --deploy H: --disk 4
+
+:: 只有 MBR dump 和容量
+build.cmd prepare --deploy H: --mbr mbr512.bin --sectors 62333952
+
+:: 全手填（按 SdLayout 的规则自己算分区）
+build.cmd prepare --deploy H: --sectors 62333952 --sig 0xA1B2C3D4 --emu-gib 12
+```
+
+**读物理盘会自动申请管理员权限。** `prepare.py` 先用 `IsUserAnAdmin()` 判断，
+不是管理员就 `ShellExecuteW(..., "runas", ...)` 弹 UAC、并把已问到的参数原样带给
+新开的管理员窗口（`--elevated` 标记）。原窗口会提示
+`[ELEVATED] continued in a new administrator window` 然后退出。
+
+- 点了"否"：原窗口报 `没有拿到管理员权限（ShellExecute 返回 5）`，退出码 1；
+- 已经是管理员（右键 build.cmd → 以管理员身份运行）：直接读，不弹窗；
+- 不想提权也能用：`--mbr` + `--sectors` 或手填参数都**不需要**管理员权限。
+
+**盘符不用猜**（`Path("H:")` 在 Python 里是"盘符相对路径"，会拼成 `H:payload.bin`
+而不是 `H:\payload.bin`，所以脚本现在会先补成 `H:\`；`H`、`h:`、全角 `H：` 都认）：
+
+```bat
+build.cmd prepare --deploy auto --disk 4     :: 自动在磁盘 4 上找含 payload.bin 的卷
+build.cmd prepare --deploy H: --disk 4
+```
+
+`--deploy auto` 会枚举该物理盘的所有卷（`IOCTL_STORAGE_GET_DEVICE_NUMBER` 匹配盘号，
+这一步不需要管理员），挑根目录里有 `payload.bin` 或 `atmosphere` 的那个。
+
+根目录里找不到 `payload.bin` 时，脚本会把该根目录的内容、以及该磁盘所有卷的列表
+打出来，并标出哪个卷里有 `payload.bin` —— 不用自己猜哪个盘符是主数据分区。
+
+写进卡里的东西（与主程序 Deploy 的布局一致）：
+```
+H:\payload.bin                       定制 hekate（= out\hekate.bin）
+H:\payload.bin.backup                卡上【原来】那个 payload.bin 改名而来
+H:\ready.flag                        128 字节任务清单（在根目录，不是 ns-toolbox）
+H:\bootloader\ns-toolbox\task.bin    与 ready.flag 逐字节相同
+H:\bootloader\ns-toolbox\payload.bin + nyx.bin + libsys_minerva.bso
+                        + libsys_lp0.bso + res.pak + thk.bin
+```
+
+**原 payload 从卡上现有的 `payload.bin` 自动取**，不用另外找文件；生成完它就成了
+`payload.bin.backup`。如果卡上原本没有 `payload.bin`，可以用 `--payload <文件>` 指定。
+
+只想生成文件、不写卡时（例如先检查参数）：
+
+```bat
+build.cmd prepare --deploy H: --out out\prepare   :: 两边都留一份
+build.cmd prepare --sectors 62333952 --out out\prepare
+```
+
+`--out` 只写目录、不碰卡；`--deploy` 只写卡、不落 `out\`。
+
+写卡前后各有一道校验：
+
+1. 写之前 `prepare.py` 复刻 `ns_manifest_valid()` + `ns_layout_valid()`，布局不符直接拒绝；
+2. 写之后逐文件**读回比对**（ready.flag / task.bin / payload.bin / 5 个组件 / backup），
+   任一不一致就报错，不会留下"看着写完了其实坏了"的卡。
+
+1. `prepare.py` 内部复刻 `ns_manifest_valid()` + `ns_layout_valid()`；
+2. 再调 `tools\nstask\bin\nstask.exe dump` 用 C 侧同一套判据复核（打印 `CRC32 通过`、
+   `与 MBR 一致性：OK`、退出码 0）。
+
+想自己复核，用 Switch 源码里那份头文件直接编一个检查器最硬（不经过任何我写的 Python）：
+
+```bash
+gcc -I <repo>/hekate/nyx/nyx_gui/frontend -o check verify/check_layout.c
+./check "H:\ready.flag" mbr512.bin 62333952
+# ns_manifest_valid = 1 / ns_layout_valid = 1（再改一个签名字节应变 0）
+```
+
+`mbr512.bin` 是这张卡的 MBR 扇区（512 字节）。拿不到就先用
+`build.cmd prepare --deploy H: --out out\prepare` 跑一次，`out\prepare\sector0.bin`
+就是本次用的那份。
 
 默认模式怎么判断"源码没变"：把 `firmware/build-info.json` 里记的 `sourceHash`
 与当前源码重新算一遍的值比对。一致且四个产物都在 → 只收拢；否则完整构建。

@@ -48,6 +48,7 @@ if "%CH%"=="7" set "MODE=sync"
 if "%CH%"=="7" set "SYNCARGS=--repo !UPSRC! --apply"
 if "%CH%"=="8" set "MODE=clean"
 if "%CH%"=="9" set "MODE=reset"
+if /i "%CH%"=="p" set "MODE=prepare"
 if /i "%CH%"=="s" goto :pick_source
 if /i "%CH%"=="h" set "MODE=help"
 if not defined MODE (
@@ -146,6 +147,28 @@ echo     devkitARM : !DEVKITARM!
 echo     Python    : !PY!
 call :save_cache
 
+rem ---------- prepare ready.flag / payload.bin for one card ----------
+if /i "!MODE!"=="prepare" (
+    echo.
+    echo == write ready.flag / payload.bin into the TF card ==
+    for /f "tokens=2 delims=:" %%c in ('chcp') do set "OLDCPP=%%c"
+    set "OLDCPP=!OLDCPP: =!"
+    chcp 65001 >nul 2>nul
+    rem %* keeps every argument (up to 9 pairs); drop the mode word
+    set "PARGS="
+    for /f "tokens=1,*" %%a in ("%*") do set "PARGS=%%b"
+    "%PY%" "%HERE%\tools\prepare.py" !PARGS!
+    set "RC=!ERRORLEVEL!"
+    if defined OLDCPP chcp !OLDCPP! >nul 2>nul
+    if "!RC!"=="42" (
+        echo.
+        echo   [ELEVATED] continued in a new administrator window.
+        echo              If no new window appeared, the UAC prompt was declined.
+        set "RC=0"
+    )
+    goto :done
+)
+
 rem ---------- sync upstream ----------
 if /i "!MODE!"=="sync" (
     echo.
@@ -202,6 +225,7 @@ if /i "!MODE!"=="sync" goto :tip_sync
 if /i "!MODE!"=="help" goto :done_pause
 if /i "!MODE!"=="reset" goto :done_pause
 if /i "!MODE!"=="clean" goto :done_pause
+if /i "!MODE!"=="prepare" goto :done_pause
 if /i "!MODE!"=="collect" goto :tip_plain
 
 echo.
@@ -377,11 +401,13 @@ echo   build.cmd sync     check upstream hekate (latest), dry-run by default
 echo     build.cmd sync --repo ctcaer --ref v6.5.5 --apply   example
 echo   build.cmd clean    remove build\ output\ assets\ release\ build-info.json out\
 echo   build.cmd reset    clear the machine-local path cache (tools\_env.cmd)
+echo   build.cmd prepare  write ready.flag / payload.bin(.backup) into the target TF card
 echo   build.cmd help     this text
 echo.
 echo   menu:  1 auto  2 full  3 arm  4 verify  5 collect
 echo          6 sync  7 sync --apply  8 clean  9 reset
-echo          s switch upstream source  h help  0 quit
+echo          p prepare task files  s switch upstream source
+echo          h help  0 quit
 echo.
 echo   upstream source: easyworld (Chinese UI) or ctcaer (official).
 echo   sync uses it automatically; override with --repo ctcaer.

@@ -361,3 +361,53 @@ grep -rlU $'\r' baseline/firmware/hekate --include=*.c | wc -l   # 期望 0
 ```
 
 （`loader/payload_00.h`、`payload_01.h` 例外 —— 那是 bin2c 生成的构建产物。）
+
+### ready.flag 能不能"编译出来"：不能，只能按卡生成
+
+`payload.bin` 是编译产物（`out/hekate.bin` 改名，107,236 字节 / `a9aacc51…`，
+与 `auto-emu.zip` 内的 `payload.bin` 逐字节相同）。
+
+`ready.flag` 不是。它是 128 字节清单，字段绑死一张卡：
+
+```
+magic "NSTASK01" + version 1 + CRC32(前 124 字节)
+disk_sectors     整卡扇区数
+signature        MBR 偏移 440 的磁盘签名（写分区表时随机生成）
+main_start/count 0x8000 / 主分区扇区数
+raw_start/count  emuMMC 分区起止
+payload_size/hash 卡上【原来】那个 payload.bin
+```
+
+Switch 侧 `ns_layout_valid()` 会拿它和卡上的 MBR 逐项比。所以正确顺序是
+「先分区写 MBR，再为这张卡生成清单」。
+
+`tools/prepare.py`（菜单 `p`）做这件事，实测一次（构造参数：62,333,952 扇区、
+签名 0xA1B2C3D4、12 GiB 档、原 payload 用官方 hekate 6.5.4 的 110,144 字节）：
+
+```
+nstask dump（C 侧同一套判据）
+  disk_sectors : 62333952 (29.72 GiB)
+  signature    : 0xA1B2C3D4
+  main         : start=32768 count=37060608
+  raw (emuMMC) : start=37093376 count=25229312
+  CRC32        : 通过
+  与 MBR 一致性：OK
+  退出码 0
+```
+
+再用**独立**校验器（`verify/check_layout.c`，直接 include Switch 源码里的
+`ns_task.h`，不经过 Python 也不经过 nstask.exe）：
+
+```
+gcc -I <repo>/hekate/nyx/nyx_gui/frontend -o check.exe verify/check_layout.c
+./check.exe out/prepare/ready.flag out/prepare/sector0.bin 62333952
+ns_manifest_valid = 1
+ns_layout_valid   = 1
+negate(signature) = 0  (expect 0)
+negate(sectors)   = 0  (expect 0)
+```
+
+两处独立实现都判通过，且反例（改一字节签名 / 扇区数减 1）都正确变 0 ——
+说明校验是真敏感，不是"恒真"。
+
+**没有在真卡上跑过**：本机当前未插卡，`--disk` 路径（需要管理员）未实测。

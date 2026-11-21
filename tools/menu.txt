@@ -11,6 +11,7 @@
     7   同步上游并应用    替换 baseline（自动先备份）
     8   清理构建产物      删 build\ output\ assets\ release\ out\
     9   清除路径缓存      下次重新查找 MSYS2 / devkitARM / Python
+    p   写入任务文件      把 ready.flag / payload.bin(.backup) 直接写进 TF 卡
     s   切换更新源        在 easyworld 与 CTCaer 之间选
     h   帮助
     0   退出

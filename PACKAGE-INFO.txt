@@ -1,6 +1,6 @@
 AutoEmu —— 自动创建 emuMMC 组件的源码工程（纯源码包）
 =====================================================
-打包时间 : 2026-11-21 01:05:22
+打包时间 : 2026-11-21 16:55:09
 上游基线 : easyworld/hekate 6.5.5 / Nyx 1.9.5 @ ff0693843bf17e9a17e047cdda0fdfcd8ea5446a
 许可     : GPL-2.0（见 baseline/firmware/hekate/LICENSE）
 
